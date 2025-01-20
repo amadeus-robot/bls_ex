@@ -49,18 +49,17 @@ defmodule BlsEx do
   @doc """
   Sign a message using the given secret key
   """
-  @spec sign(secret_key :: secret_key(), message :: binary()) ::
-          {:ok, signature()} | {:error, :invalid_seed}
-  def sign(secret_key, data)
-      when is_binary(secret_key) and byte_size(secret_key) == 64 and is_binary(data),
-      do: Native.sign(secret_key, data)
+  @spec sign(secret_key :: secret_key(), message :: binary(), dst :: binary()) :: {:ok, signature()} | {:error, :invalid_seed}
+  def sign(secret_key, data, dst)
+      when is_binary(secret_key) and byte_size(secret_key) == 64 and is_binary(data) and is_binary(dst),
+      do: Native.sign(secret_key, data, dst)
 
   @doc """
   Same as `sign/2` but raise the error
   """
-  @spec sign!(secret_key :: secret_key(), message :: binary()) :: signature()
-  def sign!(secret_key, data) do
-    case sign(secret_key, data) do
+  @spec sign!(secret_key :: secret_key(), message :: binary(), dst :: binary()) :: signature()
+  def sign!(secret_key, data, dst) do
+    case sign(secret_key, data, dst) do
       {:ok, public_key} -> public_key
       {:error, :invalid_seed} -> raise "Invalid seed"
     end
@@ -69,16 +68,17 @@ defmodule BlsEx do
   @doc """
   Verifies a single BLS signature
   """
-  @spec verify_signature?(
+  @spec verify?(
           public_key :: public_key(),
+          signature :: signature(),
           message :: binary(),
-          signature :: signature()
+          dst :: binary()
         ) ::
           boolean()
-  def verify_signature?(public_key, message, signature)
-      when is_binary(public_key) and byte_size(public_key) == 48 and is_binary(message) and
+  def verify?(public_key, signature, message, dst)
+      when is_binary(public_key) and byte_size(public_key) == 48 and is_binary(message) and is_binary(dst) and
              is_binary(signature) and byte_size(signature) == 96 do
-    case Native.verify_signature(public_key, message, signature) do
+    case Native.verify(public_key, signature, message, dst) do
       {:ok, valid?} -> valid?
       {:error, _} -> false
     end
@@ -87,13 +87,10 @@ defmodule BlsEx do
   @doc """
   Aggregate a list of signatures
   """
-  @spec aggregate_signatures(signatures :: list(signature()), public_keys :: list(public_key())) ::
+  @spec aggregate_signatures(signatures :: list(signature())) ::
           {:ok, aggregated_signature :: signature()} | {:error, :no_valid_keys_or_signatures}
-  def aggregate_signatures(signatures, public_keys)
-      when is_list(signatures) and is_list(public_keys) and
-             length(signatures) > 0 and length(public_keys) > 0 and
-             length(signatures) == length(public_keys) do
-    case Native.aggregate_signatures(signatures, public_keys) do
+  def aggregate_signatures(signatures) when is_list(signatures) and length(signatures) > 0 do
+    case Native.aggregate_signatures(signatures) do
       {:ok, signature} -> {:ok, signature}
       {:error, :zero_size_input} -> {:error, :no_valid_keys_or_signatures}
     end
@@ -102,9 +99,9 @@ defmodule BlsEx do
   @doc """
   Same as `aggregate_signatures/2` but raise the error
   """
-  @spec aggregate_signatures!(signatures :: list(signature()), public_keys :: list(public_key())) :: aggregated_signature :: signature()
-  def aggregate_signatures!(signatures, public_keys) do
-    case aggregate_signatures(signatures, public_keys) do
+  @spec aggregate_signatures!(signatures :: list(signature())) :: aggregated_signature :: signature()
+  def aggregate_signatures!(signatures) do
+    case aggregate_signatures(signatures) do
       {:ok, signature} -> signature
       {:error, :no_valid_keys_or_signatures} -> raise "No valid public keys or signatures"
     end

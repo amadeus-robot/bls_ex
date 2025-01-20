@@ -11,11 +11,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rustler = "0.34"
-dusk-bls12_381 = "0.13.0"
-hex = "0.4.3"
-dusk-bytes = "0.1.7"
-bls12_381 = { version = "0.8.0", features = ["experimental"] }
+bls12_381 = { git = "https://github.com/vans163/bls12_381", branch = "main", features = ["experimental"] }
 pairing = "0.23.0"
 group = "0.13.0"
-sha2 = "0.10.8"
+sha2 = "=0.10.8"
 rayon = "1.10.0"
