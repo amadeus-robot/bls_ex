@@ -22,4 +22,6 @@ defmodule BlsEx.Native do
   def verify(_public_key, _signature, _message, _dst), do: :erlang.nif_error(:nif_not_loaded)
   def aggregate_signatures(_signatures), do: :erlang.nif_error(:nif_not_loaded)
   def aggregate_public_keys(_public_keys), do: :erlang.nif_error(:nif_not_loaded)
+
+  def get_shared_secret(_peer_public_key, _secret_key), do: :erlang.nif_error(:nif_not_loaded)
 end

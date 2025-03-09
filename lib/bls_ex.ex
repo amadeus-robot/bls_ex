@@ -128,4 +128,25 @@ defmodule BlsEx do
       {:error, :no_valid_keys} -> raise "No valid public keys"
     end
   end
+
+  @doc """
+  Generate a shared secret from a peer public key and secret key
+  """
+  @spec get_shared_secret(peer_public_key :: public_key(), secret_key :: secret_key()) ::
+          {:ok, secret_key()} | {:error, :invalid_seed}
+  def get_shared_secret(peer_public_key, secret_key)
+    when is_binary(peer_public_key) and byte_size(peer_public_key) == 48
+    and is_binary(secret_key) and byte_size(secret_key) == 64,
+    do: Native.get_shared_secret(peer_public_key, secret_key)
+
+  @doc """
+  Same as `get_shared_secret/2` but raise the error
+  """
+  @spec get_shared_secret!(peer_public_key :: public_key(), secret_key :: secret_key()) :: secret_key :: secret_key()
+  def get_shared_secret!(peer_public_key, secret_key) do
+    case get_shared_secret(peer_public_key, secret_key) do
+      {:ok, shared_key} -> shared_key
+      {:error, :no_valid_keys} -> raise "No valid shared secret"
+    end
+  end
 end

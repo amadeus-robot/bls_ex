@@ -19,7 +19,7 @@ mod atoms {
 }
 
 #[rustler::nif]
-fn get_public_key<'a>(env: Env<'a>, seed: Binary) -> Term<'a> {
+pub fn get_public_key<'a>(env: Env<'a>, seed: Binary) -> Term<'a> {
     match parse_secret_key(seed.as_slice()) {
         Ok(sk) => {
             let g1 = G1Projective::generator() * sk;
@@ -33,7 +33,7 @@ fn get_public_key<'a>(env: Env<'a>, seed: Binary) -> Term<'a> {
 }
 
 #[rustler::nif]
-fn sign<'a>(env: Env<'a>, seed: Binary, message: Binary, dst: Binary) -> Term<'a> {
+pub fn sign<'a>(env: Env<'a>, seed: Binary, message: Binary, dst: Binary) -> Term<'a> {
     match parse_secret_key(seed.as_slice()) {
         Ok(sk) => {
             let h_g2 = <G2Projective as HashToCurve<ExpandMsgXmd<sha2::Sha256>>>::hash_to_curve(
@@ -126,6 +126,25 @@ pub fn aggregate_signatures<'a>(env: Env<'a>, signatures: Term) -> Term<'a> {
             (atoms::ok(), Binary::from_owned(bin, env)).encode(env)
         })
         .unwrap_or_else(|e| (atoms::error(), e.to_atom(env)).encode(env))
+}
+
+#[rustler::nif]
+pub fn get_shared_secret<'a>(env: Env<'a>, public_key: Binary, seed: Binary) -> Term<'a> {
+    match parse_secret_key(seed.as_slice()) {
+        Ok(sk) => {
+            match parse_public_key(public_key.as_slice()) {
+                Ok(pk_g1) => {
+                    let shared_secret_bytes = (pk_g1 * sk).to_affine().to_compressed();
+
+                    let mut bin = OwnedBinary::new(shared_secret_bytes.len()).unwrap();
+                    bin.as_mut_slice().copy_from_slice(&shared_secret_bytes);
+                    (atoms::ok(), Binary::from_owned(bin, env)).encode(env)
+                },
+                Err(e) => (atoms::error(), e.to_atom(env)).encode(env)
+            }
+        },
+        Err(e) => (atoms::error(), e.to_atom(env)).encode(env)
+    }
 }
 
 fn parse_public_key(bytes: &[u8]) -> Result<G1Projective, errors::CryptoError> {
