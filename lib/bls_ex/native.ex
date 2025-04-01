@@ -24,4 +24,8 @@ defmodule BlsEx.Native do
   def aggregate_public_keys(_public_keys), do: :erlang.nif_error(:nif_not_loaded)
 
   def get_shared_secret(_peer_public_key, _secret_key), do: :erlang.nif_error(:nif_not_loaded)
+
+  def create_resource(_data_shards, _recovery_shards, _size_shard), do: :erlang.nif_error(:nif_not_loaded)
+  def encode_shards(_resource, _data), do: :erlang.nif_error(:nif_not_loaded)
+  def decode_shards(_resource, _shards, _total_shards, _original_size), do: :erlang.nif_error(:nif_not_loaded)
 end
