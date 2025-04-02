@@ -250,6 +250,10 @@ pub fn get_shared_secret<'a>(env: Env<'a>, public_key: Binary, seed: Binary) -> 
         Ok(sk) => {
             match parse_public_key(public_key.as_slice()) {
                 Ok(pk_g1) => {
+                    if !g1_projective_is_valid(&pk_g1) {
+                        return (atoms::error(), "invalid_public_key").encode(env);
+                    }
+                                        
                     let shared_secret_bytes = (pk_g1 * sk).to_affine().to_compressed();
 
                     let mut bin = OwnedBinary::new(shared_secret_bytes.len()).unwrap();
