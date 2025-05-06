@@ -130,6 +130,17 @@ defmodule BlsEx do
   end
 
   @doc """
+  Validate a public key
+  """
+  @spec validate_public_key(public_key :: public_key()) :: true | false
+  def validate_public_key(public_key) when is_binary(public_key) do
+    case Native.validate_public_key(public_key) do
+      :ok -> true
+      _ -> false
+    end
+  end
+
+  @doc """
   Generate a shared secret from a peer public key and secret key
   """
   @spec get_shared_secret(peer_public_key :: public_key(), secret_key :: secret_key()) ::
