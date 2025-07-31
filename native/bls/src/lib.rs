@@ -1,8 +1,6 @@
-use bls12_381::hash_to_curve::*;
 use bls12_381::*;
 
 use group::Curve;
-use pairing::PairingCurveAffine;
 
 //use rayon::prelude::*;
 
@@ -11,11 +9,8 @@ mod errors;
 use rustler::types::{Binary, OwnedBinary};
 use rustler::{Encoder, Env, Term};
 
-use bls12_381::{multi_miller_loop, Gt, G1Affine, G2Affine, G2Projective, G2Prepared};
-use std::sync::OnceLock;
-use sha2::Sha256;
-
-static G1_GEN: OnceLock<G1Affine> = OnceLock::new();
+use blst::min_pk::{PublicKey, SecretKey, Signature};   // or `min_sig`, see note below
+use blst::BLST_ERROR;
 
 rustler::init!("Elixir.BlsEx.Native");
 
@@ -40,84 +35,60 @@ pub fn get_public_key<'a>(env: Env<'a>, seed: Binary) -> Term<'a> {
     }
 }
 
-#[rustler::nif]
-pub fn sign<'a>(env: Env<'a>, seed: Binary, message: Binary, dst: Binary) -> Term<'a> {
-    match parse_secret_key(seed.as_slice()) {
-        Ok(sk) => {
-            let h_g2 = <G2Projective as HashToCurve<ExpandMsgXmd<sha2::Sha256>>>::hash_to_curve(
-                [message.as_slice()],
-                dst.as_slice(),
-            );
-            let signature_bytes = (h_g2 * sk).to_affine().to_compressed();
+//TODO: Upgrade to this where dynamic size seed can be used
+//pub fn sign_signature(seed64: &[u8], msg: &[u8], dst: &[u8]) -> Result<Signature, errors::CryptoError> {
+//    let sk = SecretKey::key_gen(seed64, &[]).map_err(|_| errors::CryptoError::InvalidSeed)?;        // accepts 32–256 bytes
+//    Ok(sk.sign(msg, dst, &[]))
+//}
 
-            let mut bin = OwnedBinary::new(signature_bytes.len()).unwrap();
-            bin.as_mut_slice().copy_from_slice(&signature_bytes);
-            (atoms::ok(), Binary::from_owned(bin, env)).encode(env)
+fn sign_from_scalar(scalar: Scalar, msg: &[u8], dst: &[u8]) -> Result<Signature, errors::CryptoError> {
+    let mut sk_be = scalar.to_bytes();
+    sk_be.reverse();
+
+    let sk = SecretKey::from_bytes(&sk_be).map_err(|_| errors::CryptoError::InvalidSeed)?;
+    Ok(sk.sign(msg, dst, &[]))
+}
+
+#[rustler::nif]
+pub fn sign<'a>(env: Env<'a>, seed64: Binary, message: Binary, dst: Binary) -> Term<'a> {
+    match parse_secret_key(seed64.as_slice()) {
+        Ok(sk) => {
+            match sign_from_scalar(sk, message.as_slice(), dst.as_slice()) {
+                Ok(signature) => {
+                    let signature_bytes = signature.to_bytes();
+                    let mut bin = OwnedBinary::new(signature_bytes.len()).unwrap();
+                    bin.as_mut_slice().copy_from_slice(&signature_bytes);
+                    (atoms::ok(), Binary::from_owned(bin, env)).encode(env)
+                },
+                Err(e) => (atoms::error(), e.to_atom(env)).encode(env)
+            }
         },
         Err(e) => (atoms::error(), e.to_atom(env)).encode(env)
     }
 }
 
-#[rustler::nif]
-pub fn verify<'a>(env: Env<'a>, public_key: Binary, signature: Binary, message: Binary, dst: Binary) -> Term<'a> {
-    let pk_aff: G1Affine = match parse_public_key(public_key.as_slice()) {
-        Ok(pk_proj) => pk_proj.to_affine(),
-        Err(e)      => return (atoms::error(), e.to_atom(env)).encode(env),
-    };
-    let sig_prep: G2Prepared = match parse_signature(signature.as_slice()) {
-        Ok(sig_proj) => sig_proj.to_affine().into(),
-        Err(e)       => return (atoms::error(), e.to_atom(env)).encode(env),
-    };
+pub fn verify_signature(pk_bytes: &[u8], sig_bytes: &[u8], msg: &[u8], dst: &[u8]) -> Result<(), errors::CryptoError> {
+    let pk = PublicKey::deserialize(pk_bytes).map_err(|_| errors::CryptoError::InvalidPoint)?;
+    let sig = Signature::deserialize(sig_bytes).map_err(|_| errors::CryptoError::InvalidSignature)?;
 
-    // 1) hash-to-curve with the passed-in DST, negate, then prepare
-    let h_neg_prep: G2Prepared = {
-        let h_proj: G2Projective =
-            <G2Projective as HashToCurve<ExpandMsgXmd<Sha256>>>::hash_to_curve(
-                &[message.as_slice()],
-                dst.as_slice(),
-            );
-        let mut h_aff = h_proj.to_affine();
-        h_aff = -h_aff;
-        h_aff.into()
-    };
+    let err = sig.verify(true,            // <-- use hash_to_curve
+                         msg,
+                         dst,             // <-- caller‑supplied DST
+                         &[],             // no message augmentation
+                         &pk,
+                         true);           // validate that `pk` ∈ G1
 
-    // 2) lazily init & reuse the G1 generator affine
-    let g1_gen: &G1Affine = G1_GEN.get_or_init(|| G1Affine::generator());
-    // 3) two Miller loops + one final exponentiation
-    let acc = multi_miller_loop(&[
-        (g1_gen,      &sig_prep),
-        (&pk_aff,     &h_neg_prep),
-    ])
-    .final_exponentiation();
-
-    if acc == Gt::identity() {
-        (atoms::ok(), true).encode(env)
+    if err == BLST_ERROR::BLST_SUCCESS {
+        Ok(())
     } else {
-        (atoms::error(), errors::CryptoError::InvalidSignature.to_atom(env)).encode(env)
+        Err(errors::CryptoError::VerificationFailed)
     }
 }
 
-pub fn verify_old<'a>(env: Env<'a>, public_key: Binary, signature: Binary, message: Binary, dst: Binary) -> Term<'a> {
-    match parse_public_key(public_key.as_slice()) {
-        Ok(public_key) => {
-            match parse_signature(signature.as_slice()) {
-                Ok(signature) => {
-                    let h_g2 = <G2Projective as HashToCurve<ExpandMsgXmd<sha2::Sha256>>>::hash_to_curve(
-                        [message.as_slice()],
-                        dst.as_slice(),
-                    );
-                    let p1 = signature.to_affine().pairing_with(&G1Affine::generator());
-                    let p2 = h_g2.to_affine().pairing_with(&public_key.to_affine());
-
-                    if p1 == p2 {
-                        (atoms::ok(), true).encode(env)
-                    } else {
-                        (atoms::error(), errors::CryptoError::InvalidSignature.to_atom(env)).encode(env)
-                    }
-                },
-                Err(e) => (atoms::error(), e.to_atom(env)).encode(env)
-            }
-        },
+#[rustler::nif]
+pub fn verify<'a>(env: Env<'a>, public_key: Binary, signature: Binary, message: Binary, dst: Binary) -> Term<'a> {
+    match verify_signature(public_key.as_slice(), signature.as_slice(), message.as_slice(), dst.as_slice()) {
+        Ok(()) => (atoms::ok(), true).encode(env),
         Err(e) => (atoms::error(), e.to_atom(env)).encode(env)
     }
 }
