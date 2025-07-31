@@ -11,6 +11,12 @@ mod errors;
 use rustler::types::{Binary, OwnedBinary};
 use rustler::{Encoder, Env, Term};
 
+use bls12_381::{multi_miller_loop, Gt, G1Affine, G2Affine, G2Projective, G2Prepared};
+use std::sync::OnceLock;
+use sha2::Sha256;
+
+static G1_GEN: OnceLock<G1Affine> = OnceLock::new();
+
 rustler::init!("Elixir.BlsEx.Native");
 
 mod atoms {
@@ -54,6 +60,44 @@ pub fn sign<'a>(env: Env<'a>, seed: Binary, message: Binary, dst: Binary) -> Ter
 
 #[rustler::nif]
 pub fn verify<'a>(env: Env<'a>, public_key: Binary, signature: Binary, message: Binary, dst: Binary) -> Term<'a> {
+    let pk_aff: G1Affine = match parse_public_key(public_key.as_slice()) {
+        Ok(pk_proj) => pk_proj.to_affine(),
+        Err(e)      => return (atoms::error(), e.to_atom(env)).encode(env),
+    };
+    let sig_prep: G2Prepared = match parse_signature(signature.as_slice()) {
+        Ok(sig_proj) => sig_proj.to_affine().into(),
+        Err(e)       => return (atoms::error(), e.to_atom(env)).encode(env),
+    };
+
+    // 1) hash-to-curve with the passed-in DST, negate, then prepare
+    let h_neg_prep: G2Prepared = {
+        let h_proj: G2Projective =
+            <G2Projective as HashToCurve<ExpandMsgXmd<Sha256>>>::hash_to_curve(
+                &[message.as_slice()],
+                dst.as_slice(),
+            );
+        let mut h_aff = h_proj.to_affine();
+        h_aff = -h_aff;
+        h_aff.into()
+    };
+
+    // 2) lazily init & reuse the G1 generator affine
+    let g1_gen: &G1Affine = G1_GEN.get_or_init(|| G1Affine::generator());
+    // 3) two Miller loops + one final exponentiation
+    let acc = multi_miller_loop(&[
+        (g1_gen,      &sig_prep),
+        (&pk_aff,     &h_neg_prep),
+    ])
+    .final_exponentiation();
+
+    if acc == Gt::identity() {
+        (atoms::ok(), true).encode(env)
+    } else {
+        (atoms::error(), errors::CryptoError::InvalidSignature.to_atom(env)).encode(env)
+    }
+}
+
+pub fn verify_old<'a>(env: Env<'a>, public_key: Binary, signature: Binary, message: Binary, dst: Binary) -> Term<'a> {
     match parse_public_key(public_key.as_slice()) {
         Ok(public_key) => {
             match parse_signature(signature.as_slice()) {
